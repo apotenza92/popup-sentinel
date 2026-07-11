@@ -6,7 +6,7 @@ Popup Sentinel uses narrowly scoped site profiles, making it easy to add new pro
 
 ## Install
 
-Add this URL to wBlock or another userscript manager:
+Add this URL to your userscript manager:
 
 ```text
 https://raw.githubusercontent.com/apotenza92/popup-sentinel/main/popup-sentinel.user.js
