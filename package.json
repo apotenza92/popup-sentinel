@@ -1,0 +1,13 @@
+{
+  "name": "popup-sentinel",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A policy-driven userscript that blocks verified popup generators.",
+  "scripts": {
+    "test": "node --test && node scripts/validate.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
