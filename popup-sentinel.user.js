@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Sentinel
 // @namespace    https://github.com/apotenza92/popup-sentinel
-// @version      0.0.1
+// @version      0.0.2
 // @description  Blocks verified popup generators while preserving legitimate new windows.
 // @author       apotenza92
 // @match        https://streamed.pk/*
@@ -26,6 +26,7 @@
       blockedFrameHosts: new Set(['ndcertainlywhen.com']),
       blockedFramePaths: [/^\/ad\.html(?:$|[?#])/i],
       blockedPopupHosts: new Set(['ndcertainlywhen.com']),
+      verifiedPopupGenerators: [/\baclib\s*\.\s*runPop\s*\(/i],
       blockedInlineScriptText: [/adserverDomain/i],
       blockedHTML: [/<iframe\b[^>]*\bsrc\s*=\s*(['"])\/ad\.html(?:[?#][^'"]*)?\1/i],
     },
@@ -77,6 +78,36 @@
     return setMatchesHost(profile.blockedPopupHosts, normalizeHost(url.hostname));
   };
 
+  const isBlankPopupURL = value => {
+    if (value == null || String(value).trim() === '') return true;
+    return /^about:blank(?:$|[?#])/i.test(String(value).trim());
+  };
+
+  const isBlockedPopupOpen = (
+    profile,
+    value,
+    base,
+    currentHost,
+    verifiedGeneratorPresent,
+  ) => {
+    if (isBlockedPopupURL(profile, value, base)) return true;
+
+    return (
+      verifiedGeneratorPresent &&
+      setMatchesHost(profile.pageHosts, normalizeHost(currentHost)) &&
+      isBlankPopupURL(value)
+    );
+  };
+
+  const hasVerifiedPopupGenerator = (profile, scriptTexts) => {
+    for (const text of scriptTexts) {
+      if (profile.verifiedPopupGenerators.some(pattern => pattern.test(String(text || '')))) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const testAPI = globalThis.__POPUP_SENTINEL_TEST__;
   if (testAPI && typeof testAPI === 'object') {
     Object.assign(testAPI, {
@@ -85,6 +116,9 @@
       toURL,
       isBlockedFrameURL,
       isBlockedPopupURL,
+      isBlankPopupURL,
+      isBlockedPopupOpen,
+      hasVerifiedPopupGenerator,
     });
     return;
   }
@@ -104,6 +138,12 @@
   const log = (...args) => {
     if (debugEnabled) console.info('[Popup Sentinel]', ...args);
   };
+
+  const verifiedPopupGeneratorPresent = () =>
+    hasVerifiedPopupGenerator(
+      profile,
+      Array.from(document.scripts, script => (script.src ? '' : script.textContent)),
+    );
 
   const frameIsBlocked = frame =>
     frame instanceof HTMLIFrameElement &&
@@ -198,8 +238,16 @@
   const originalOpen = window.open;
   window.open = new Proxy(originalOpen, {
     apply(target, thisArg, args) {
-      if (isBlockedPopupURL(profile, args[0], baseHref())) {
-        log('Blocked verified popup URL', args[0]);
+      if (
+        isBlockedPopupOpen(
+          profile,
+          args[0],
+          baseHref(),
+          currentHost(),
+          verifiedPopupGeneratorPresent(),
+        )
+      ) {
+        log('Blocked verified popup open', args[0] || 'about:blank');
         return null;
       }
       return Reflect.apply(target, thisArg, args);

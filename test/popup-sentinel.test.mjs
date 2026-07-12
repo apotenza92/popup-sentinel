@@ -53,6 +53,56 @@ test('blocks the observed downstream advertising host', () => {
   );
 });
 
+test('blocks blank popups from the verified generator before delayed ad navigation', () => {
+  for (const host of ['streamed.pk', 'streamed.st', 'streami.su', 'embed.st']) {
+    const base = `https://${host}/watch/fixture`;
+
+    // aclib opens an initially blank window, then navigates it to the ad later.
+    assert.equal(api.isBlockedPopupOpen(streamed, undefined, base, host, true), true);
+    assert.equal(api.isBlockedPopupOpen(streamed, '', base, host, true), true);
+    assert.equal(api.isBlockedPopupOpen(streamed, 'about:blank', base, host, true), true);
+    assert.equal(api.isBlockedPopupOpen(streamed, 'about:blank#opened', base, host, true), true);
+  }
+});
+
+test('recognizes only the verified aclib popup activation marker', () => {
+  assert.equal(
+    api.hasVerifiedPopupGenerator(streamed, ["aclib.runPop({zoneId: '10521566'});"]),
+    true,
+  );
+  assert.equal(api.hasVerifiedPopupGenerator(streamed, ['aclib . runPop ({ zoneId: 9742758 })']), true);
+  assert.equal(api.hasVerifiedPopupGenerator(streamed, ['aclib.runInterstitial({ zoneId: 1 })']), false);
+  assert.equal(api.hasVerifiedPopupGenerator(streamed, ['const zoneId = 10521566']), false);
+});
+
+test('preserves blank popups when the verified generator is absent', () => {
+  assert.equal(
+    api.isBlockedPopupOpen(streamed, 'about:blank', 'https://embed.st/player/1', 'embed.st', false),
+    false,
+  );
+  assert.equal(
+    api.isBlockedPopupOpen(streamed, '', 'https://streamed.pk/watch/1', 'streamed.pk', false),
+    false,
+  );
+});
+
+test('does not apply the generator rule on unsupported hosts or unrelated direct URLs', () => {
+  assert.equal(
+    api.isBlockedPopupOpen(streamed, 'about:blank', 'https://example.com/', 'example.com', true),
+    false,
+  );
+  assert.equal(
+    api.isBlockedPopupOpen(
+      streamed,
+      'https://example.com/account/help',
+      'https://embed.st/player/1',
+      'embed.st',
+      true,
+    ),
+    false,
+  );
+});
+
 test('does not blanket-block blank or unrelated popups', () => {
   assert.equal(api.isBlockedPopupURL(streamed, 'about:blank', 'https://embed.st/'), false);
   assert.equal(api.isBlockedPopupURL(streamed, 'https://example.com/', 'https://embed.st/'), false);
