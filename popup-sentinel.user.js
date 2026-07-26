@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Sentinel
 // @namespace    https://github.com/apotenza92/popup-sentinel
-// @version      0.0.2
+// @version      0.0.3
 // @description  Blocks verified popup generators while preserving legitimate new windows.
 // @author       apotenza92
 // @match        https://streamed.pk/*
@@ -27,6 +27,18 @@
       blockedFramePaths: [/^\/ad\.html(?:$|[?#])/i],
       blockedPopupHosts: new Set(['ndcertainlywhen.com']),
       verifiedPopupGenerators: [/\baclib\s*\.\s*runPop\s*\(/i],
+      verifiedPopupLoaderURLs: [
+        /^https:\/\/[^/]+\/(?:[a-f0-9]{2}\/){3}[a-f0-9]{32}\.js\?(?:[^#]*&)?mg=1(?:&[^#]*)?(?:#.*)?$/i,
+      ],
+      popupInteractionEvents: new Set([
+        'click',
+        'mousedown',
+        'mouseup',
+        'pointerdown',
+        'pointerup',
+        'touchstart',
+        'touchend',
+      ]),
       blockedInlineScriptText: [/adserverDomain/i],
       blockedHTML: [/<iframe\b[^>]*\bsrc\s*=\s*(['"])\/ad\.html(?:[?#][^'"]*)?\1/i],
     },
@@ -108,6 +120,31 @@
     return false;
   };
 
+  const isVerifiedPopupLoaderURL = (profile, value, base) => {
+    const url = toURL(value, base);
+    if (!url) return false;
+    return profile.verifiedPopupLoaderURLs.some(pattern => pattern.test(url.href));
+  };
+
+  const shouldBlockPopupListener = (profile, type, scriptSrc, scriptText, base) =>
+    profile.popupInteractionEvents.has(String(type || '').toLowerCase()) &&
+    (
+      isVerifiedPopupLoaderURL(profile, scriptSrc, base) ||
+      hasVerifiedPopupGenerator(profile, [scriptText])
+    );
+
+  const isPopupOverlayStyle = (position, zIndex, opacity) => {
+    const parsedZIndex = Number.parseInt(String(zIndex || ''), 10);
+    const parsedOpacity = Number.parseFloat(String(opacity || '1'));
+    return (
+      String(position || '').toLowerCase() === 'fixed' &&
+      Number.isFinite(parsedZIndex) &&
+      parsedZIndex >= 2147483640 &&
+      Number.isFinite(parsedOpacity) &&
+      parsedOpacity <= 0.05
+    );
+  };
+
   const testAPI = globalThis.__POPUP_SENTINEL_TEST__;
   if (testAPI && typeof testAPI === 'object') {
     Object.assign(testAPI, {
@@ -119,6 +156,9 @@
       isBlankPopupURL,
       isBlockedPopupOpen,
       hasVerifiedPopupGenerator,
+      isVerifiedPopupLoaderURL,
+      shouldBlockPopupListener,
+      isPopupOverlayStyle,
     });
     return;
   }
@@ -145,15 +185,36 @@
       Array.from(document.scripts, script => (script.src ? '' : script.textContent)),
     );
 
+  const elementIsBlockedPopupOverlay = element => {
+    if (!(element instanceof HTMLElement)) return false;
+    if (
+      !isPopupOverlayStyle(
+        element.style.position,
+        element.style.zIndex,
+        element.style.opacity,
+      )
+    ) {
+      return false;
+    }
+    return (
+      element.matches('a[target="_blank"]') ||
+      Boolean(element.querySelector('a[target="_blank"]'))
+    );
+  };
+
   const frameIsBlocked = frame =>
     frame instanceof HTMLIFrameElement &&
     isBlockedFrameURL(profile, frame.getAttribute('src') || frame.src, baseHref(), currentHost());
 
   const scriptIsBlocked = script =>
     script instanceof HTMLScriptElement &&
-    profile.blockedInlineScriptText.some(pattern => pattern.test(script.textContent || ''));
+    (
+      isVerifiedPopupLoaderURL(profile, script.getAttribute('src') || script.src, baseHref()) ||
+      profile.blockedInlineScriptText.some(pattern => pattern.test(script.textContent || ''))
+    );
 
-  const nodeIsBlocked = node => frameIsBlocked(node) || scriptIsBlocked(node);
+  const nodeIsBlocked = node =>
+    frameIsBlocked(node) || scriptIsBlocked(node) || elementIsBlockedPopupOverlay(node);
 
   const removeBlockedDescendants = root => {
     if (!(root instanceof Element || root instanceof Document)) return;
@@ -169,7 +230,34 @@
         script.remove();
       }
     }
+    for (const element of root.querySelectorAll('[style]')) {
+      if (elementIsBlockedPopupOverlay(element)) {
+        log('Removed verified popup overlay');
+        element.remove();
+      }
+    }
   };
+
+  const originalAddEventListener = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = new Proxy(originalAddEventListener, {
+    apply(target, thisArg, args) {
+      const currentScript = document.currentScript;
+      if (
+        currentScript instanceof HTMLScriptElement &&
+        shouldBlockPopupListener(
+          profile,
+          args[0],
+          currentScript.getAttribute('src') || currentScript.src,
+          currentScript.textContent,
+          baseHref(),
+        )
+      ) {
+        log('Blocked verified popup interaction listener', args[0]);
+        return undefined;
+      }
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
 
   const originalInsertAdjacentHTML = Element.prototype.insertAdjacentHTML;
   Element.prototype.insertAdjacentHTML = new Proxy(originalInsertAdjacentHTML, {
@@ -258,6 +346,14 @@
     'click',
     event => {
       const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+      const overlay = link?.closest('[style]');
+      if (overlay && elementIsBlockedPopupOverlay(overlay)) {
+        log('Blocked verified popup overlay click');
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        overlay.remove();
+        return;
+      }
       if (link && isBlockedPopupURL(profile, link.href, baseHref())) {
         log('Blocked verified popup link', link.href);
         event.preventDefault();

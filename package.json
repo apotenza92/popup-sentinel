@@ -1,6 +1,6 @@
 {
   "name": "popup-sentinel",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "A policy-driven userscript that blocks verified popup generators.",
   "scripts": {

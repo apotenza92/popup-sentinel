@@ -75,6 +75,82 @@ test('recognizes only the verified aclib popup activation marker', () => {
   assert.equal(api.hasVerifiedPopupGenerator(streamed, ['const zoneId = 10521566']), false);
 });
 
+test('recognizes the current rotating-host popup loader URL shape', () => {
+  assert.equal(
+    api.isVerifiedPopupLoaderURL(
+      streamed,
+      'https://therocketlanguages.com/18/88/42/188842a03a6c7d8cc1c6c6db841702b3.js?mg=1',
+      'https://streamed.pk/',
+    ),
+    true,
+  );
+  assert.equal(
+    api.isVerifiedPopupLoaderURL(
+      streamed,
+      'https://rotated-ad-host.example/18/88/42/188842a03a6c7d8cc1c6c6db841702b3.js?foo=1&mg=1',
+      'https://streamed.pk/',
+    ),
+    true,
+  );
+  assert.equal(
+    api.isVerifiedPopupLoaderURL(
+      streamed,
+      'https://cdn.example/app/188842a03a6c7d8cc1c6c6db841702b3.js',
+      'https://streamed.pk/',
+    ),
+    false,
+  );
+});
+
+test('blocks interaction listeners registered by the verified popup generator', () => {
+  const loader =
+    'https://therocketlanguages.com/18/88/42/188842a03a6c7d8cc1c6c6db841702b3.js?mg=1';
+
+  for (const type of ['click', 'mousedown', 'touchstart', 'touchend', 'pointerdown']) {
+    assert.equal(
+      api.shouldBlockPopupListener(streamed, type, loader, '', 'https://streamed.pk/'),
+      true,
+    );
+  }
+  assert.equal(
+    api.shouldBlockPopupListener(
+      streamed,
+      'scroll',
+      loader,
+      '',
+      'https://streamed.pk/',
+    ),
+    false,
+  );
+  assert.equal(
+    api.shouldBlockPopupListener(
+      streamed,
+      'click',
+      '',
+      "aclib.runPop({zoneId: '11323166'});",
+      'https://streamed.pk/',
+    ),
+    true,
+  );
+  assert.equal(
+    api.shouldBlockPopupListener(
+      streamed,
+      'click',
+      'https://streamed.pk/app.js',
+      '',
+      'https://streamed.pk/',
+    ),
+    false,
+  );
+});
+
+test('recognizes the verified nearly transparent full-screen popup overlay', () => {
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483650', '.01'), true);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483639', '.01'), false);
+  assert.equal(api.isPopupOverlayStyle('absolute', '2147483650', '.01'), false);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483650', '1'), false);
+});
+
 test('preserves blank popups when the verified generator is absent', () => {
   assert.equal(
     api.isBlockedPopupOpen(streamed, 'about:blank', 'https://embed.st/player/1', 'embed.st', false),
