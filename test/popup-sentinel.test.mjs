@@ -12,6 +12,7 @@ const streamed = api.profileForHost('embed.st');
 test('selects the streamed profile for supported hosts', () => {
   assert.equal(streamed.id, 'streamed');
   assert.equal(api.profileForHost('streamed.pk').id, 'streamed');
+  assert.equal(api.profileForHost('embedhd.st').id, 'streamed');
   assert.equal(api.profileForHost('unknown.example'), undefined);
 });
 
@@ -22,6 +23,21 @@ test('blocks the verified embed.st advertising frame', () => {
   );
   assert.equal(
     api.isBlockedFrameURL(streamed, '/ad.html?rotation=2', 'https://embed.st/player/1', 'embed.st'),
+    true,
+  );
+  assert.equal(
+    api.isBlockedFrameURL(
+      streamed,
+      '/ads.html',
+      'https://embedhd.st/source/streamed.php',
+      'embedhd.st',
+    ),
+    true,
+  );
+  assert.equal(
+    streamed.blockedHTML.some(pattern =>
+      pattern.test('<iframe style="visibility:hidden" src="/ads.html"></iframe>'),
+    ),
     true,
   );
 });
@@ -49,6 +65,23 @@ test('blocks the observed downstream advertising host', () => {
   );
   assert.equal(
     api.isBlockedPopupURL(streamed, 'https://ndcertainlywhen.com/click', 'https://embed.st/'),
+    true,
+  );
+  assert.equal(
+    api.isBlockedFrameURL(
+      streamed,
+      'https://onandasmilee.com/?cu3vf=1252473',
+      'https://embedhd.st/ads.html',
+      'embedhd.st',
+    ),
+    true,
+  );
+  assert.equal(
+    api.isBlockedPopupURL(
+      streamed,
+      'https://www.togglevpn.org/?campaign_name=POP%20-%20iOS%20-%20CPA&cw_p1=10521572',
+      'https://embedhd.st/',
+    ),
     true,
   );
 });
@@ -99,6 +132,14 @@ test('recognizes the current rotating-host popup loader URL shape', () => {
       'https://streamed.pk/',
     ),
     false,
+  );
+  assert.equal(
+    api.isVerifiedPopupLoaderURL(
+      streamed,
+      'https://acscdn.com/script/aclib.js',
+      'https://embedhd.st/',
+    ),
+    true,
   );
 });
 

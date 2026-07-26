@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Popup Sentinel
 // @namespace    https://github.com/apotenza92/popup-sentinel
-// @version      0.0.3
+// @version      0.0.4
 // @description  Blocks verified popup generators while preserving legitimate new windows.
 // @author       apotenza92
 // @match        https://streamed.pk/*
 // @match        https://streamed.st/*
 // @match        https://streami.su/*
 // @match        https://embed.st/*
+// @match        https://embedhd.st/*
 // @run-at       document-start
 // @inject-into  page
 // @grant        none
@@ -21,14 +22,21 @@
   const profiles = [
     {
       id: 'streamed',
-      pageHosts: new Set(['streamed.pk', 'streamed.st', 'streami.su', 'embed.st']),
-      runtimeHosts: new Set(['embed.st']),
-      blockedFrameHosts: new Set(['ndcertainlywhen.com']),
-      blockedFramePaths: [/^\/ad\.html(?:$|[?#])/i],
-      blockedPopupHosts: new Set(['ndcertainlywhen.com']),
+      pageHosts: new Set([
+        'streamed.pk',
+        'streamed.st',
+        'streami.su',
+        'embed.st',
+        'embedhd.st',
+      ]),
+      runtimeHosts: new Set(['embed.st', 'embedhd.st']),
+      blockedFrameHosts: new Set(['ndcertainlywhen.com', 'onandasmilee.com']),
+      blockedFramePaths: [/^\/ads?\.html(?:$|[?#])/i],
+      blockedPopupHosts: new Set(['ndcertainlywhen.com', 'togglevpn.org']),
       verifiedPopupGenerators: [/\baclib\s*\.\s*runPop\s*\(/i],
       verifiedPopupLoaderURLs: [
         /^https:\/\/[^/]+\/(?:[a-f0-9]{2}\/){3}[a-f0-9]{32}\.js\?(?:[^#]*&)?mg=1(?:&[^#]*)?(?:#.*)?$/i,
+        /^https:\/\/(?:[^/]+\.)?acscdn\.com\/script\/aclib\.js(?:[?#]|$)/i,
       ],
       popupInteractionEvents: new Set([
         'click',
@@ -40,7 +48,7 @@
         'touchend',
       ]),
       blockedInlineScriptText: [/adserverDomain/i],
-      blockedHTML: [/<iframe\b[^>]*\bsrc\s*=\s*(['"])\/ad\.html(?:[?#][^'"]*)?\1/i],
+      blockedHTML: [/<iframe\b[^>]*\bsrc\s*=\s*(['"])\/ads?\.html(?:[?#][^'"]*)?\1/i],
     },
   ];
 
