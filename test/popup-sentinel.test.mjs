@@ -53,7 +53,7 @@ test('preserves normal player frames and pages', () => {
   );
 });
 
-test('blocks the observed downstream advertising host', () => {
+test('blocks downstream frames based on verified ad-frame provenance', () => {
   assert.equal(
     api.isBlockedFrameURL(
       streamed,
@@ -61,10 +61,6 @@ test('blocks the observed downstream advertising host', () => {
       'https://embed.st/ad.html',
       'embed.st',
     ),
-    true,
-  );
-  assert.equal(
-    api.isBlockedPopupURL(streamed, 'https://ndcertainlywhen.com/click', 'https://embed.st/'),
     true,
   );
   assert.equal(
@@ -76,13 +72,32 @@ test('blocks the observed downstream advertising host', () => {
     ),
     true,
   );
+});
+
+test('classifies popup destinations by profile boundary rather than ad domain', () => {
   assert.equal(
-    api.isBlockedPopupURL(
+    api.isExternalPopupURL(
       streamed,
       'https://www.togglevpn.org/?campaign_name=POP%20-%20iOS%20-%20CPA&cw_p1=10521572',
       'https://embedhd.st/',
     ),
     true,
+  );
+  assert.equal(
+    api.isExternalPopupURL(
+      streamed,
+      'https://future-rotating-ad.example/landing',
+      'https://embedhd.st/',
+    ),
+    true,
+  );
+  assert.equal(
+    api.isExternalPopupURL(
+      streamed,
+      'https://streamed.pk/watch/fixture',
+      'https://embedhd.st/',
+    ),
+    false,
   );
 });
 
@@ -132,14 +147,6 @@ test('recognizes the current rotating-host popup loader URL shape', () => {
       'https://streamed.pk/',
     ),
     false,
-  );
-  assert.equal(
-    api.isVerifiedPopupLoaderURL(
-      streamed,
-      'https://acscdn.com/script/aclib.js',
-      'https://embedhd.st/',
-    ),
-    true,
   );
 });
 
@@ -201,9 +208,19 @@ test('preserves blank popups when the verified generator is absent', () => {
     api.isBlockedPopupOpen(streamed, '', 'https://streamed.pk/watch/1', 'streamed.pk', false),
     false,
   );
+  assert.equal(
+    api.isBlockedPopupOpen(
+      streamed,
+      'https://future-rotating-ad.example/landing',
+      'https://embedhd.st/player/1',
+      'embedhd.st',
+      false,
+    ),
+    false,
+  );
 });
 
-test('does not apply the generator rule on unsupported hosts or unrelated direct URLs', () => {
+test('blocks any external popup from the verified generator without domain hardcoding', () => {
   assert.equal(
     api.isBlockedPopupOpen(streamed, 'about:blank', 'https://example.com/', 'example.com', true),
     false,
@@ -216,11 +233,35 @@ test('does not apply the generator rule on unsupported hosts or unrelated direct
       'embed.st',
       true,
     ),
+    true,
+  );
+  assert.equal(
+    api.isBlockedPopupOpen(
+      streamed,
+      'https://another-future-ad.example/landing',
+      'https://embedhd.st/player/1',
+      'embedhd.st',
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    api.isBlockedPopupOpen(
+      streamed,
+      'https://streamed.pk/watch/fixture',
+      'https://embedhd.st/player/1',
+      'embedhd.st',
+      true,
+    ),
     false,
   );
 });
 
-test('does not blanket-block blank or unrelated popups', () => {
-  assert.equal(api.isBlockedPopupURL(streamed, 'about:blank', 'https://embed.st/'), false);
-  assert.equal(api.isBlockedPopupURL(streamed, 'https://example.com/', 'https://embed.st/'), false);
+test('does not classify non-web or profile-local destinations as external popups', () => {
+  assert.equal(api.isExternalPopupURL(streamed, 'about:blank', 'https://embed.st/'), false);
+  assert.equal(api.isExternalPopupURL(streamed, 'mailto:help@example.com', 'https://embed.st/'), false);
+  assert.equal(
+    api.isExternalPopupURL(streamed, 'https://embed.st/embed/player/1', 'https://embed.st/'),
+    false,
+  );
 });

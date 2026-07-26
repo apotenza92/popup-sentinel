@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Sentinel
 // @namespace    https://github.com/apotenza92/popup-sentinel
-// @version      0.0.4
+// @version      0.0.5
 // @description  Blocks verified popup generators while preserving legitimate new windows.
 // @author       apotenza92
 // @match        https://streamed.pk/*
@@ -30,13 +30,10 @@
         'embedhd.st',
       ]),
       runtimeHosts: new Set(['embed.st', 'embedhd.st']),
-      blockedFrameHosts: new Set(['ndcertainlywhen.com', 'onandasmilee.com']),
       blockedFramePaths: [/^\/ads?\.html(?:$|[?#])/i],
-      blockedPopupHosts: new Set(['ndcertainlywhen.com', 'togglevpn.org']),
       verifiedPopupGenerators: [/\baclib\s*\.\s*runPop\s*\(/i],
       verifiedPopupLoaderURLs: [
         /^https:\/\/[^/]+\/(?:[a-f0-9]{2}\/){3}[a-f0-9]{32}\.js\?(?:[^#]*&)?mg=1(?:&[^#]*)?(?:#.*)?$/i,
-        /^https:\/\/(?:[^/]+\.)?acscdn\.com\/script\/aclib\.js(?:[?#]|$)/i,
       ],
       popupInteractionEvents: new Set([
         'click',
@@ -82,20 +79,37 @@
     const url = toURL(value, base);
     if (!url) return false;
 
+    const pageURL = toURL(base);
     const host = normalizeHost(url.hostname);
-    if (setMatchesHost(profile.blockedFrameHosts, host)) return true;
+    const normalizedCurrentHost = normalizeHost(currentHost);
+    const currentHostIsRuntime = setMatchesHost(profile.runtimeHosts, normalizedCurrentHost);
+    if (!currentHostIsRuntime) return false;
+
+    const targetIsAdFrame =
+      host === normalizedCurrentHost &&
+      profile.blockedFramePaths.some(pattern =>
+        pattern.test(`${url.pathname}${url.search}${url.hash}`),
+      );
+    if (targetIsAdFrame) return true;
+
+    const pageIsAdFrame =
+      pageURL &&
+      normalizeHost(pageURL.hostname) === normalizedCurrentHost &&
+      profile.blockedFramePaths.some(pattern =>
+        pattern.test(`${pageURL.pathname}${pageURL.search}${pageURL.hash}`),
+      );
 
     return (
-      setMatchesHost(profile.runtimeHosts, normalizeHost(currentHost)) &&
-      host === normalizeHost(currentHost) &&
-      profile.blockedFramePaths.some(pattern => pattern.test(`${url.pathname}${url.search}${url.hash}`))
+      pageIsAdFrame &&
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      !setMatchesHost(profile.pageHosts, host)
     );
   };
 
-  const isBlockedPopupURL = (profile, value, base) => {
+  const isExternalPopupURL = (profile, value, base) => {
     const url = toURL(value, base);
-    if (!url || url.protocol === 'about:') return false;
-    return setMatchesHost(profile.blockedPopupHosts, normalizeHost(url.hostname));
+    if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) return false;
+    return !setMatchesHost(profile.pageHosts, normalizeHost(url.hostname));
   };
 
   const isBlankPopupURL = value => {
@@ -110,13 +124,14 @@
     currentHost,
     verifiedGeneratorPresent,
   ) => {
-    if (isBlockedPopupURL(profile, value, base)) return true;
+    if (
+      !verifiedGeneratorPresent ||
+      !setMatchesHost(profile.pageHosts, normalizeHost(currentHost))
+    ) {
+      return false;
+    }
 
-    return (
-      verifiedGeneratorPresent &&
-      setMatchesHost(profile.pageHosts, normalizeHost(currentHost)) &&
-      isBlankPopupURL(value)
-    );
+    return isBlankPopupURL(value) || isExternalPopupURL(profile, value, base);
   };
 
   const hasVerifiedPopupGenerator = (profile, scriptTexts) => {
@@ -160,7 +175,7 @@
       profileForHost,
       toURL,
       isBlockedFrameURL,
-      isBlockedPopupURL,
+      isExternalPopupURL,
       isBlankPopupURL,
       isBlockedPopupOpen,
       hasVerifiedPopupGenerator,
@@ -361,11 +376,6 @@
         event.stopImmediatePropagation();
         overlay.remove();
         return;
-      }
-      if (link && isBlockedPopupURL(profile, link.href, baseHref())) {
-        log('Blocked verified popup link', link.href);
-        event.preventDefault();
-        event.stopImmediatePropagation();
       }
     },
     true,
