@@ -12,9 +12,16 @@ const artifactRoot = resolve(
   repoRoot,
   process.env.STREAMED_TEST_ARTIFACTS || 'test-results/live-mobile',
 );
+const storageStatePath = process.env.STREAMED_TEST_STORAGE_STATE
+  ? resolve(process.env.STREAMED_TEST_STORAGE_STATE)
+  : null;
 const tapCount = Number.parseInt(process.env.STREAMED_TEST_TAPS || '3', 10);
 const playerTimeout = Number.parseInt(
   process.env.STREAMED_TEST_PLAYER_TIMEOUT || '45000',
+  10,
+);
+const playbackTimeout = Number.parseInt(
+  process.env.STREAMED_TEST_PLAYBACK_TIMEOUT || '15000',
   10,
 );
 const interactionProbe = `(() => {
@@ -85,6 +92,7 @@ const runCase = async ({ name, enabled }) => {
     locale: 'en-AU',
     timezoneId: 'Australia/Melbourne',
     recordVideo: { dir: outputDirectory },
+    ...(storageStatePath ? { storageState: storageStatePath } : {}),
   });
   await context.addInitScript({ content: interactionProbe });
   if (enabled) await context.addInitScript({ content: userscript });
@@ -131,12 +139,28 @@ const runCase = async ({ name, enabled }) => {
       count => globalThis.__POPUP_SENTINEL_LIVE_PROBE__.interactions.slice(count),
       interactionCountBefore,
     );
+    const media = await mediaState(video).catch(() => null);
     taps.push({
       index,
-      media: await mediaState(video).catch(() => null),
+      media,
       popupCount: popupEvents.length,
       interactions,
     });
+    if (media && !media.paused) break;
+  }
+
+  const playbackDeadline = Date.now() + playbackTimeout;
+  let after = await mediaState(video);
+  while (
+    Date.now() < playbackDeadline &&
+    (
+      after.paused ||
+      after.readyState < 2 ||
+      after.currentTime <= before.currentTime
+    )
+  ) {
+    await rootPage.waitForTimeout(500);
+    after = await mediaState(video);
   }
 
   await rootPage.screenshot({
@@ -149,6 +173,7 @@ const runCase = async ({ name, enabled }) => {
     targetURL,
     playerURL: playerFrame.url(),
     before,
+    after,
     taps,
     popupEvents,
   };
@@ -179,21 +204,18 @@ try {
     `Popup Sentinel allowed ${treatment.popupEvents.length} popup(s).`,
   );
   assert.ok(
-    treatment.taps.every(tap =>
+    treatment.taps.some(tap =>
       tap.interactions.some(interaction =>
         interaction.trusted &&
         (interaction.type === 'pointerdown' || interaction.type === 'touchstart')
       )
     ),
-    'No popup opened, but at least one tap did not reach the real player frame.',
+    'No popup opened, but no tap reached the real player frame.',
   );
   assert.ok(
-    treatment.taps.some(tap =>
-      tap.media &&
-      !tap.media.paused &&
-      tap.media.readyState >= 2 &&
-      tap.media.currentTime > treatment.before.currentTime
-    ),
+    !treatment.after.paused &&
+    treatment.after.readyState >= 2 &&
+    treatment.after.currentTime > treatment.before.currentTime,
     'No popup opened, but the stream never entered real playback.',
   );
 

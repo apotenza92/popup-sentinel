@@ -39,5 +39,7 @@ watch-page flow. The test also fails if its control does not reproduce a popup,
 the stream does not enter playback, or an anti-bot check prevents the player
 from loading. Set `HEADED=1` to watch the WebKit run on the Mac. Screenshots,
 videos, and structured results are written under `test-results/live-mobile/`.
+When a manual anti-bot check is required, pass its temporary Playwright storage
+state with `STREAMED_TEST_STORAGE_STATE`.
 
 MIT licensed.
