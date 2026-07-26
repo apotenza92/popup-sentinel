@@ -16,6 +16,47 @@ test('selects the streamed profile for supported hosts', () => {
   assert.equal(api.profileForHost('unknown.example'), undefined);
 });
 
+test('trusts a rotating downstream player only through a known runtime referrer', () => {
+  const downstream = api.profileForContext(
+    'rotating-player.example',
+    ['rotating-player.example', 'embedhd.st'],
+  );
+  assert.equal(downstream.profile.id, 'streamed');
+  assert.equal(downstream.trustedDownstream, true);
+  assert.equal(
+    api.profileForContext('rotating-player.example', ['untrusted.example']),
+    null,
+  );
+  assert.equal(
+    api.profileForContext('embed.st', []).trustedDownstream,
+    false,
+  );
+});
+
+test('blocks popups in a trusted downstream player without naming its host', () => {
+  assert.equal(
+    api.isBlockedPopupOpen(
+      streamed,
+      'https://future-rotating-ad.example/landing',
+      'https://rotating-player.example/player',
+      'rotating-player.example',
+      false,
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    api.isBlockedPopupOpen(
+      streamed,
+      'https://rotating-player.example/help',
+      'https://rotating-player.example/player',
+      'rotating-player.example',
+      false,
+      true,
+    ),
+    false,
+  );
+});
 test('blocks the verified embed.st advertising frame', () => {
   assert.equal(
     api.isBlockedFrameURL(streamed, '/ad.html', 'https://embed.st/player/1', 'embed.st'),
@@ -193,10 +234,19 @@ test('blocks interaction listeners registered by the verified popup generator', 
 });
 
 test('recognizes the verified nearly transparent full-screen popup overlay', () => {
-  assert.equal(api.isPopupOverlayStyle('fixed', '2147483650', '.01'), true);
-  assert.equal(api.isPopupOverlayStyle('fixed', '2147483639', '.01'), false);
-  assert.equal(api.isPopupOverlayStyle('absolute', '2147483650', '.01'), false);
-  assert.equal(api.isPopupOverlayStyle('fixed', '2147483650', '1'), false);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483650', '.01', ''), true);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483639', '.01', ''), false);
+  assert.equal(api.isPopupOverlayStyle('absolute', '2147483650', '.01', ''), false);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483650', '1', ''), false);
+});
+
+test('recognizes the verified transparent full-screen popup overlay', () => {
+  assert.equal(api.isTransparentColor('transparent'), true);
+  assert.equal(api.isTransparentColor('rgba(0, 0, 0, 0)'), true);
+  assert.equal(api.isTransparentColor('rgba(255,255,255,0.01)'), false);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483647', '1', 'transparent'), true);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483647', '1', 'rgba(0, 0, 0, 0)'), true);
+  assert.equal(api.isPopupOverlayStyle('fixed', '2147483647', '1', 'rgb(0, 0, 0)'), false);
 });
 
 test('preserves blank popups when the verified generator is absent', () => {

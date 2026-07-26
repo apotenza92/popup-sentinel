@@ -1,14 +1,11 @@
 // ==UserScript==
 // @name         Popup Sentinel
 // @namespace    https://github.com/apotenza92/popup-sentinel
-// @version      0.0.5
+// @version      0.0.6
 // @description  Blocks verified popup generators while preserving legitimate new windows.
 // @author       apotenza92
-// @match        https://streamed.pk/*
-// @match        https://streamed.st/*
-// @match        https://streami.su/*
-// @match        https://embed.st/*
-// @match        https://embedhd.st/*
+// @match        https://*/*
+// @include      about:blank
 // @run-at       document-start
 // @inject-into  page
 // @grant        none
@@ -66,6 +63,20 @@
     return profiles.find(profile => setMatchesHost(profile.pageHosts, normalized));
   };
 
+  const profileForContext = (host, referrerHosts = []) => {
+    const directProfile = profileForHost(host);
+    if (directProfile) return { profile: directProfile, trustedDownstream: false };
+
+    for (const referrerHost of referrerHosts) {
+      const normalized = normalizeHost(referrerHost);
+      const profile = profiles.find(candidate =>
+        setMatchesHost(candidate.runtimeHosts, normalized),
+      );
+      if (profile) return { profile, trustedDownstream: true };
+    }
+    return null;
+  };
+
   const toURL = (value, base = 'https://invalid.local/') => {
     if (typeof value !== 'string' || value.length === 0) return null;
     try {
@@ -106,10 +117,14 @@
     );
   };
 
-  const isExternalPopupURL = (profile, value, base) => {
+  const isExternalPopupURL = (profile, value, base, currentHost = '') => {
     const url = toURL(value, base);
     if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) return false;
-    return !setMatchesHost(profile.pageHosts, normalizeHost(url.hostname));
+    const host = normalizeHost(url.hostname);
+    return (
+      host !== normalizeHost(currentHost) &&
+      !setMatchesHost(profile.pageHosts, host)
+    );
   };
 
   const isBlankPopupURL = value => {
@@ -123,15 +138,22 @@
     base,
     currentHost,
     verifiedGeneratorPresent,
+    trustedDownstream = false,
   ) => {
     if (
-      !verifiedGeneratorPresent ||
-      !setMatchesHost(profile.pageHosts, normalizeHost(currentHost))
+      (!verifiedGeneratorPresent && !trustedDownstream) ||
+      (
+        !trustedDownstream &&
+        !setMatchesHost(profile.pageHosts, normalizeHost(currentHost))
+      )
     ) {
       return false;
     }
 
-    return isBlankPopupURL(value) || isExternalPopupURL(profile, value, base);
+    return (
+      isBlankPopupURL(value) ||
+      isExternalPopupURL(profile, value, base, currentHost)
+    );
   };
 
   const hasVerifiedPopupGenerator = (profile, scriptTexts) => {
@@ -156,7 +178,15 @@
       hasVerifiedPopupGenerator(profile, [scriptText])
     );
 
-  const isPopupOverlayStyle = (position, zIndex, opacity) => {
+  const isTransparentColor = value => {
+    const normalized = String(value || '').toLowerCase().replace(/\s+/g, '');
+    if (normalized === 'transparent') return true;
+
+    const rgba = normalized.match(/^rgba\(\d+(?:\.\d+)?,\d+(?:\.\d+)?,\d+(?:\.\d+)?,(.+)\)$/);
+    return rgba ? Number.parseFloat(rgba[1]) === 0 : false;
+  };
+
+  const isPopupOverlayStyle = (position, zIndex, opacity, backgroundColor) => {
     const parsedZIndex = Number.parseInt(String(zIndex || ''), 10);
     const parsedOpacity = Number.parseFloat(String(opacity || '1'));
     return (
@@ -164,7 +194,10 @@
       Number.isFinite(parsedZIndex) &&
       parsedZIndex >= 2147483640 &&
       Number.isFinite(parsedOpacity) &&
-      parsedOpacity <= 0.05
+      (
+        parsedOpacity <= 0.05 ||
+        isTransparentColor(backgroundColor)
+      )
     );
   };
 
@@ -173,6 +206,7 @@
     Object.assign(testAPI, {
       profiles,
       profileForHost,
+      profileForContext,
       toURL,
       isBlockedFrameURL,
       isExternalPopupURL,
@@ -181,13 +215,31 @@
       hasVerifiedPopupGenerator,
       isVerifiedPopupLoaderURL,
       shouldBlockPopupListener,
+      isTransparentColor,
       isPopupOverlayStyle,
     });
     return;
   }
 
-  const profile = profileForHost(location.hostname);
-  if (!profile) return;
+  const contextReferrerHosts = () => {
+    const hosts = [];
+    let candidate = window;
+    for (let depth = 0; depth < 5; depth += 1) {
+      try {
+        const referrer = toURL(candidate.document.referrer);
+        if (referrer?.hostname) hosts.push(referrer.hostname);
+        if (candidate.parent === candidate) break;
+        candidate = candidate.parent;
+      } catch {
+        break;
+      }
+    }
+    return hosts;
+  };
+
+  const context = profileForContext(location.hostname, contextReferrerHosts());
+  if (!context) return;
+  const { profile, trustedDownstream } = context;
 
   const baseHref = () => location.href;
   const currentHost = () => normalizeHost(location.hostname);
@@ -215,6 +267,7 @@
         element.style.position,
         element.style.zIndex,
         element.style.opacity,
+        element.style.backgroundColor,
       )
     ) {
       return false;
@@ -356,6 +409,7 @@
           baseHref(),
           currentHost(),
           verifiedPopupGeneratorPresent(),
+          trustedDownstream,
         )
       ) {
         log('Blocked verified popup open', args[0] || 'about:blank');
@@ -376,6 +430,20 @@
         event.stopImmediatePropagation();
         overlay.remove();
         return;
+      }
+      if (
+        trustedDownstream &&
+        link?.target.toLowerCase() === '_blank' &&
+        isExternalPopupURL(
+          profile,
+          link.getAttribute('href') || link.href,
+          baseHref(),
+          currentHost(),
+        )
+      ) {
+        log('Blocked external popup link in trusted downstream player');
+        event.preventDefault();
+        event.stopImmediatePropagation();
       }
     },
     true,
