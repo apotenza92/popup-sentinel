@@ -26,16 +26,18 @@ npm test
 ```
 
 The opt-in live mobile regression uses Playwright WebKit with an iPhone touch
-profile. It first proves that the unprotected control opens a new top-level page,
-then repeats the same real-player taps with Popup Sentinel enabled:
+profile. It must start from a complete Streamed `/watch/` page, prove that the
+unprotected control opens a new top-level page, then prove that the protected
+page reaches real playback without opening any new page:
 
 ```sh
-npm run test:live-mobile
+STREAMED_TEST_URL='https://streamed.pk/watch/…' npm run test:live-mobile
 ```
 
-The test fails as inconclusive if its control does not reproduce a popup. Set
-`STREAMED_TEST_URL` to test another current `embed.st` player, or `HEADED=1` to
-watch the WebKit run on the Mac. Screenshots, videos, and structured results are
-written under `test-results/live-mobile/`.
+Direct player or iframe URLs are rejected because they do not prove the whole
+watch-page flow. The test also fails if its control does not reproduce a popup,
+the stream does not enter playback, or an anti-bot check prevents the player
+from loading. Set `HEADED=1` to watch the WebKit run on the Mac. Screenshots,
+videos, and structured results are written under `test-results/live-mobile/`.
 
 MIT licensed.

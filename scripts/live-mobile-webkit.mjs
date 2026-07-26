@@ -7,9 +7,7 @@ import { devices, webkit } from '@playwright/test';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const userscriptPath = resolve(repoRoot, 'popup-sentinel.user.js');
 const userscript = await readFile(userscriptPath, 'utf8');
-const targetURL =
-  process.env.STREAMED_TEST_URL ||
-  'https://embed.st/embed/golf/23989/1';
+const targetURL = process.env.STREAMED_TEST_URL;
 const artifactRoot = resolve(
   repoRoot,
   process.env.STREAMED_TEST_ARTIFACTS || 'test-results/live-mobile',
@@ -38,6 +36,24 @@ const interactionProbe = `(() => {
 
 if (!Number.isInteger(tapCount) || tapCount < 1) {
   throw new Error('STREAMED_TEST_TAPS must be a positive integer');
+}
+
+if (!targetURL) {
+  throw new Error(
+    'STREAMED_TEST_URL is required and must be a full Streamed /watch/ URL.',
+  );
+}
+
+const parsedTargetURL = new URL(targetURL);
+const supportedWatchHosts = new Set(['streamed.pk', 'streamed.st', 'streami.su']);
+if (
+  !supportedWatchHosts.has(parsedTargetURL.hostname) ||
+  !parsedTargetURL.pathname.startsWith('/watch/')
+) {
+  throw new Error(
+    'STREAMED_TEST_URL must start at a supported Streamed /watch/ page; ' +
+    'direct player or iframe URLs are diagnostic-only.',
+  );
 }
 
 const browser = await webkit.launch({ headless: process.env.HEADED !== '1' });
@@ -171,8 +187,20 @@ try {
     ),
     'No popup opened, but at least one tap did not reach the real player frame.',
   );
+  assert.ok(
+    treatment.taps.some(tap =>
+      tap.media &&
+      !tap.media.paused &&
+      tap.media.readyState >= 2 &&
+      tap.media.currentTime > treatment.before.currentTime
+    ),
+    'No popup opened, but the stream never entered real playback.',
+  );
 
-  console.log(`PASS: control reproduced popups and treatment blocked all of them.`);
+  console.log(
+    'PASS: the whole watch page reached playback; the control reproduced ' +
+    'popups and the treatment blocked all of them.',
+  );
   console.log(`Artifacts: ${artifactRoot}`);
 } finally {
   await browser.close();
