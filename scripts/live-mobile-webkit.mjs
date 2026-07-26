@@ -98,6 +98,7 @@ const runCase = async ({ name, enabled }) => {
   if (enabled) await context.addInitScript({ content: userscript });
 
   const popupEvents = [];
+  const rootNavigations = [];
   let rootPage;
   context.on('page', page => {
     if (rootPage && page !== rootPage) {
@@ -110,6 +111,9 @@ const runCase = async ({ name, enabled }) => {
   });
 
   rootPage = await context.newPage();
+  rootPage.on('framenavigated', frame => {
+    if (frame === rootPage.mainFrame()) rootNavigations.push(frame.url());
+  });
   await rootPage.goto(targetURL, { waitUntil: 'commit', timeout: 30000 });
 
   const playerFrame = await waitForVideoFrame(rootPage);
@@ -171,6 +175,8 @@ const runCase = async ({ name, enabled }) => {
     name,
     enabled,
     targetURL,
+    finalRootURL: rootPage.url(),
+    rootNavigations,
     playerURL: playerFrame.url(),
     before,
     after,
@@ -202,6 +208,15 @@ try {
     treatment.popupEvents.length,
     0,
     `Popup Sentinel allowed ${treatment.popupEvents.length} popup(s).`,
+  );
+  assert.equal(
+    treatment.finalRootURL,
+    parsedTargetURL.href,
+    `The original watch tab was redirected to ${treatment.finalRootURL}.`,
+  );
+  assert.ok(
+    treatment.rootNavigations.every(url => url === parsedTargetURL.href),
+    `The original watch tab left the requested URL: ${treatment.rootNavigations.join(', ')}`,
   );
   assert.ok(
     treatment.taps.some(tap =>
