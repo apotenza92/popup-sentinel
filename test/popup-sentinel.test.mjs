@@ -33,6 +33,39 @@ test('trusts a rotating downstream player only through a known runtime referrer'
   );
 });
 
+test('restricts external navigation throughout the player chain', () => {
+  assert.equal(
+    api.contextRestrictsExternalNavigation(
+      { profile: streamed, trustedDownstream: false },
+      'embed.st',
+    ),
+    true,
+  );
+  assert.equal(
+    api.contextRestrictsExternalNavigation(
+      { profile: streamed, trustedDownstream: true },
+      'unpredictable-player.example',
+    ),
+    true,
+  );
+  assert.equal(
+    api.contextRestrictsExternalNavigation(
+      { profile: streamed, trustedDownstream: false },
+      'streamed.pk',
+    ),
+    false,
+  );
+});
+
+test('carries trusted player provenance synchronously without losing the frame name', () => {
+  const marker = api.contextMarker(streamed, 'player-slot');
+  const parsed = api.contextFromMarker(marker);
+  assert.equal(parsed.context.profile.id, 'streamed');
+  assert.equal(parsed.context.trustedDownstream, true);
+  assert.equal(parsed.originalName, 'player-slot');
+  assert.equal(api.contextFromMarker('ordinary-frame-name'), null);
+});
+
 test('blocks popups in a trusted downstream player without naming its host', () => {
   assert.equal(
     api.isBlockedPopupOpen(

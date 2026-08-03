@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Popup Sentinel
 // @namespace    https://github.com/apotenza92/popup-sentinel
-// @version      0.0.6
+// @version      0.0.7
 // @description  Blocks verified popup generators while preserving legitimate new windows.
 // @author       apotenza92
 // @match        https://*/*
@@ -75,6 +75,40 @@
       if (profile) return { profile, trustedDownstream: true };
     }
     return null;
+  };
+
+  const contextRestrictsExternalNavigation = (context, host) =>
+    Boolean(
+      context &&
+      (
+        context.trustedDownstream ||
+        setMatchesHost(context.profile.runtimeHosts, normalizeHost(host))
+      )
+    );
+
+  const contextMarkerPrefix = '__popup_sentinel_context_v1__:';
+
+  const contextMarker = (profile, originalName = '') =>
+    `${contextMarkerPrefix}${profile.id}:${encodeURIComponent(originalName)}`;
+
+  const contextFromMarker = value => {
+    const text = String(value || '');
+    if (!text.startsWith(contextMarkerPrefix)) return null;
+    const separator = text.indexOf(':', contextMarkerPrefix.length);
+    if (separator === -1) return null;
+    const profileId = text.slice(contextMarkerPrefix.length, separator);
+    const profile = profiles.find(candidate => candidate.id === profileId);
+    if (!profile) return null;
+    let originalName = '';
+    try {
+      originalName = decodeURIComponent(text.slice(separator + 1));
+    } catch {
+      return null;
+    }
+    return {
+      context: { profile, trustedDownstream: true },
+      originalName,
+    };
   };
 
   const toURL = (value, base = 'https://invalid.local/') => {
@@ -207,6 +241,9 @@
       profiles,
       profileForHost,
       profileForContext,
+      contextRestrictsExternalNavigation,
+      contextMarker,
+      contextFromMarker,
       toURL,
       isBlockedFrameURL,
       isExternalPopupURL,
@@ -237,10 +274,6 @@
     return hosts;
   };
 
-  const context = profileForContext(location.hostname, contextReferrerHosts());
-  if (!context) return;
-  const { profile, trustedDownstream } = context;
-
   const baseHref = () => location.href;
   const currentHost = () => normalizeHost(location.hostname);
   const debugEnabled = (() => {
@@ -254,7 +287,7 @@
     if (debugEnabled) console.info('[Popup Sentinel]', ...args);
   };
 
-  const verifiedPopupGeneratorPresent = () =>
+  const verifiedPopupGeneratorPresent = profile =>
     hasVerifiedPopupGenerator(
       profile,
       Array.from(document.scripts, script => (script.src ? '' : script.textContent)),
@@ -277,6 +310,161 @@
       Boolean(element.querySelector('a[target="_blank"]'))
     );
   };
+
+  const markedContext = contextFromMarker(window.name);
+  if (markedContext) window.name = markedContext.originalName;
+  let activeContext =
+    profileForContext(location.hostname, contextReferrerHosts()) ||
+    markedContext?.context ||
+    null;
+  const contextRequestType = 'popup-sentinel:context-request:v1';
+  const contextResponseType = 'popup-sentinel:context-response:v1';
+
+  const isDirectChildWindow = candidate => {
+    for (const frame of document.querySelectorAll('iframe')) {
+      try {
+        if (frame.contentWindow === candidate) return true;
+      } catch {
+        // A cross-origin child can still receive the response below.
+      }
+    }
+    return false;
+  };
+
+  const markChildFrame = frame => {
+    if (!(frame instanceof HTMLIFrameElement) || !activeContext) return;
+    const name = frame.getAttribute('name') || '';
+    if (!name.startsWith(contextMarkerPrefix)) {
+      frame.setAttribute('name', contextMarker(activeContext.profile, name));
+    }
+  };
+
+  const markChildFrames = root => {
+    if (!activeContext || !(root instanceof Element || root instanceof Document)) return;
+    if (root instanceof HTMLIFrameElement) markChildFrame(root);
+    for (const frame of root.querySelectorAll('iframe')) markChildFrame(frame);
+  };
+
+  const sendContextTo = target => {
+    if (!activeContext || !target) return;
+    target.postMessage(
+      {
+        type: contextResponseType,
+        profileId: activeContext.profile.id,
+      },
+      '*',
+    );
+  };
+
+  addEventListener('message', event => {
+    if (
+      event.data?.type === contextRequestType &&
+      activeContext &&
+      isDirectChildWindow(event.source)
+    ) {
+      sendContextTo(event.source);
+      return;
+    }
+
+    if (
+      event.data?.type === contextResponseType &&
+      !activeContext &&
+      event.source === parent
+    ) {
+      const profile = profiles.find(candidate => candidate.id === event.data.profileId);
+      if (profile) {
+        activeContext = { profile, trustedDownstream: true };
+        markChildFrames(document);
+        for (const frame of document.querySelectorAll('iframe')) {
+          sendContextTo(frame.contentWindow);
+        }
+      }
+    }
+  });
+
+  if (!activeContext && parent !== window) {
+    for (const delay of [0, 25, 100, 500, 2000]) {
+      setTimeout(() => {
+        if (!activeContext) {
+          parent.postMessage({ type: contextRequestType }, '*');
+        }
+      }, delay);
+    }
+  }
+
+  if (activeContext) markChildFrames(document);
+
+  new MutationObserver(records => {
+    for (const record of records) {
+      for (const node of record.addedNodes) markChildFrames(node);
+    }
+  }).observe(document, { childList: true, subtree: true });
+
+  const originalOpen = window.open;
+  window.open = new Proxy(originalOpen, {
+    apply(target, thisArg, args) {
+      const context = activeContext;
+      if (context) {
+        const restrictExternalNavigation = contextRestrictsExternalNavigation(
+          context,
+          currentHost(),
+        );
+        if (
+          isBlockedPopupOpen(
+            context.profile,
+            args[0],
+            baseHref(),
+            currentHost(),
+            verifiedPopupGeneratorPresent(context.profile),
+            restrictExternalNavigation,
+          )
+        ) {
+          log('Blocked popup open from trusted player chain', args[0] || 'about:blank');
+          return null;
+        }
+      }
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
+
+  addEventListener(
+    'click',
+    event => {
+      const context = activeContext;
+      if (!context) return;
+
+      const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+      const overlay = link?.closest('[style]');
+      if (overlay && elementIsBlockedPopupOverlay(overlay)) {
+        log('Blocked verified popup overlay click');
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        overlay.remove();
+        return;
+      }
+
+      if (
+        contextRestrictsExternalNavigation(context, currentHost()) &&
+        link &&
+        isExternalPopupURL(
+          context.profile,
+          link.getAttribute('href') || link.href,
+          baseHref(),
+          currentHost(),
+        )
+      ) {
+        log('Blocked external navigation in trusted player chain');
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        link.remove();
+      }
+    },
+    true,
+  );
+
+  const context = activeContext;
+  if (!context) return;
+  const { profile } = context;
 
   const frameIsBlocked = frame =>
     frame instanceof HTMLIFrameElement &&
@@ -355,6 +543,7 @@
     Node.prototype[methodName] = new Proxy(original, {
       apply(target, thisArg, args) {
         const node = args[0];
+        markChildFrames(node);
         if (nodeIsBlocked(node)) {
           log(`Blocked ${methodName}`, node.src || node.nodeName);
           return node;
@@ -371,6 +560,12 @@
   const originalSetAttribute = Element.prototype.setAttribute;
   Element.prototype.setAttribute = new Proxy(originalSetAttribute, {
     apply(target, thisArg, args) {
+      if (
+        thisArg instanceof HTMLIFrameElement &&
+        String(args[0]).toLowerCase() === 'src'
+      ) {
+        markChildFrame(thisArg);
+      }
       if (
         thisArg instanceof HTMLIFrameElement &&
         String(args[0]).toLowerCase() === 'src' &&
@@ -390,6 +585,7 @@
       enumerable: iframeSrcDescriptor.enumerable,
       get: iframeSrcDescriptor.get,
       set(value) {
+        markChildFrame(this);
         if (isBlockedFrameURL(profile, String(value), baseHref(), currentHost())) {
           log('Blocked iframe src property', value);
           return;
@@ -398,56 +594,6 @@
       },
     });
   }
-
-  const originalOpen = window.open;
-  window.open = new Proxy(originalOpen, {
-    apply(target, thisArg, args) {
-      if (
-        isBlockedPopupOpen(
-          profile,
-          args[0],
-          baseHref(),
-          currentHost(),
-          verifiedPopupGeneratorPresent(),
-          trustedDownstream,
-        )
-      ) {
-        log('Blocked verified popup open', args[0] || 'about:blank');
-        return null;
-      }
-      return Reflect.apply(target, thisArg, args);
-    },
-  });
-
-  addEventListener(
-    'click',
-    event => {
-      const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
-      const overlay = link?.closest('[style]');
-      if (overlay && elementIsBlockedPopupOverlay(overlay)) {
-        log('Blocked verified popup overlay click');
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        overlay.remove();
-        return;
-      }
-      if (
-        trustedDownstream &&
-        link?.target.toLowerCase() === '_blank' &&
-        isExternalPopupURL(
-          profile,
-          link.getAttribute('href') || link.href,
-          baseHref(),
-          currentHost(),
-        )
-      ) {
-        log('Blocked external popup link in trusted downstream player');
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      }
-    },
-    true,
-  );
 
   new MutationObserver(records => {
     for (const record of records) {
