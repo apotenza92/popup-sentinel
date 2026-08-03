@@ -15,7 +15,18 @@ const artifactRoot = resolve(
 const storageStatePath = process.env.STREAMED_TEST_STORAGE_STATE
   ? resolve(process.env.STREAMED_TEST_STORAGE_STATE)
   : null;
-const tapCount = Number.parseInt(process.env.STREAMED_TEST_TAPS || '3', 10);
+const controlTapCount = Number.parseInt(
+  process.env.STREAMED_TEST_CONTROL_TAPS || process.env.STREAMED_TEST_TAPS || '5',
+  10,
+);
+const treatmentTapCount = Number.parseInt(
+  process.env.STREAMED_TEST_TREATMENT_TAPS || '1',
+  10,
+);
+const treatmentSettleTimeout = Number.parseInt(
+  process.env.STREAMED_TEST_TREATMENT_SETTLE || '5000',
+  10,
+);
 const playerTimeout = Number.parseInt(
   process.env.STREAMED_TEST_PLAYER_TIMEOUT || '45000',
   10,
@@ -52,8 +63,16 @@ const interactionProbe = `(() => {
   });
 })();`;
 
-if (!Number.isInteger(tapCount) || tapCount < 1) {
-  throw new Error('STREAMED_TEST_TAPS must be a positive integer');
+if (!Number.isInteger(controlTapCount) || controlTapCount < 1) {
+  throw new Error('STREAMED_TEST_CONTROL_TAPS must be a positive integer');
+}
+
+if (treatmentTapCount !== 1) {
+  throw new Error('STREAMED_TEST_TREATMENT_TAPS must remain exactly 1');
+}
+
+if (!Number.isInteger(treatmentSettleTimeout) || treatmentSettleTimeout < 0) {
+  throw new Error('STREAMED_TEST_TREATMENT_SETTLE must be a non-negative integer');
 }
 
 if (!targetURL) {
@@ -187,7 +206,7 @@ const captureVisualProof = async (frame, video, outputDirectory) => {
   };
 };
 
-const runCase = async ({ name, enabled }) => {
+const runCase = async ({ name, enabled, tapLimit, settleBeforeTap = 0 }) => {
   const outputDirectory = resolve(artifactRoot, name);
   await mkdir(outputDirectory, { recursive: true });
 
@@ -236,8 +255,9 @@ const runCase = async ({ name, enabled }) => {
 
   const video = playerFrame.locator('video').first();
   const before = await mediaState(video);
+  if (settleBeforeTap > 0) await rootPage.waitForTimeout(settleBeforeTap);
   const taps = [];
-  for (let index = 1; index <= tapCount; index += 1) {
+  for (let index = 1; index <= tapLimit; index += 1) {
     const interactionCountBefore = await playerFrame.evaluate(
       () => globalThis.__POPUP_SENTINEL_LIVE_PROBE__.interactions.length,
     );
@@ -318,8 +338,14 @@ const runCase = async ({ name, enabled }) => {
 try {
   console.log(`Live mobile target: ${targetURL}`);
   console.log('Running control without Popup Sentinel...');
-  const control = await runCase({ name: 'control', enabled: false });
-  console.log(`Control popups after ${tapCount} taps: ${control.popupEvents.length}`);
+  const control = await runCase({
+    name: 'control',
+    enabled: false,
+    tapLimit: controlTapCount,
+  });
+  console.log(
+    `Control popups after ${control.taps.length} tap(s): ${control.popupEvents.length}`,
+  );
   assert.ok(
     control.popupEvents.length > 0,
     'Inconclusive: the control did not reproduce a popup, so the treatment cannot prove a fix.',
@@ -340,9 +366,22 @@ try {
     'Inconclusive: the control video stalled during the pixel-proof sequence.',
   );
 
-  console.log('Running treatment with Popup Sentinel...');
-  const treatment = await runCase({ name: 'popup-sentinel', enabled: true });
-  console.log(`Treatment popups after ${tapCount} taps: ${treatment.popupEvents.length}`);
+  console.log('Running one-click treatment with Popup Sentinel...');
+  const treatment = await runCase({
+    name: 'popup-sentinel',
+    enabled: true,
+    tapLimit: treatmentTapCount,
+    settleBeforeTap: treatmentSettleTimeout,
+  });
+  console.log(
+    `Treatment popups after exactly ${treatment.taps.length} tap: ` +
+    treatment.popupEvents.length,
+  );
+  assert.equal(
+    treatment.taps.length,
+    1,
+    'The protected player did not reach playback from exactly one tap.',
+  );
   assert.equal(
     treatment.popupEvents.length,
     0,

@@ -37,11 +37,11 @@ STREAMED_TEST_URL='https://streamed.pk/watch/…' npm run test:live-mobile
 
 Direct player or iframe URLs are rejected because they do not prove the whole
 watch-page flow. The test also fails if its control does not reproduce a popup,
-the stream does not remain in playback, decoded video pixels do not change
-across three screenshots, or an anti-bot check prevents the player from
-loading. Set `HEADED=1` to watch the WebKit run on the Mac. Screenshots, videos,
-per-pixel comparisons, frame traces, and structured results are written under
-`test-results/live-mobile/`.
+the protected player does not start from exactly one tap, the stream does not
+remain in playback, decoded video pixels do not change across three screenshots,
+or an anti-bot check prevents the player from loading. Set `HEADED=1` to watch
+the WebKit run on the Mac. Screenshots, videos, per-pixel comparisons, frame
+traces, and structured results are written under `test-results/live-mobile/`.
 When a manual anti-bot check is required, pass its temporary Playwright storage
 state with `STREAMED_TEST_STORAGE_STATE`.
 
